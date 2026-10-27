@@ -1,110 +1,36 @@
-# MinUI
+# MinUI with PSP
 
-MinUI is a focused, custom launcher and libretro frontend for [a variety of retro handhelds](#supported-devices).
+A fork of [MinUI](https://github.com/shauninman/MinUI) that adds `PSP.pak`: PPSSPP running inside minarch, so PSP games get MinUI's in-game menu, save states and auto-resume.
 
-<img src="github/minui-main.png" width=320 /> <img src="github/minui-menu-gbc.png" width=320 /> 
+For devices that use MinUI's `rg35xxplus` folder (H700: eg. RG35XX Plus, RG28XX, RG34XX, RG CubeXX). Tested on the RG28XX with Puzzle Quest: Challenge of the Warlords and Persona 3 Portable.
 
-## Features
+## Install
 
-- Simple launcher, simple SD card
-- No settings or configuration
-- No boxart, themes, or distractions
-- Automatically hides hidden files
-  and extension and region/version 
-  cruft in display names
-- Consistent in-emulator menu with
-  quick access to save states, disc
-  changing, and emulator options
-- Automatically sleeps after 30 seconds 
-  or press POWER to sleep (and wake)
-- Automatically powers off while asleep
-  after two minutes or hold POWER for
-  one second
-- Automatically resumes right where
-  you left off if powered off while
-  in-game, manually or while asleep
-- Resume from manually created, last 
-  used save state by pressing X in 
-  the launcher instead of A
-- Streamlined emulator frontend 
-  (minarch + libretro cores)
-- Single SD card compatible with
-  multiple devices from different
-  manufacturers
+1. Unzip `PSP.pak-rg35xxplus.zip` from [Releases](../../releases) at the root of your MinUI SD card.
+2. Put `.iso`, `.cso`, `.pbp` or `.chd` games in `/Roms/Sony PlayStation Portable (PSP)/`.
 
-You can [grab the latest version here](https://github.com/shauninman/MinUI/releases).
+No BIOS needed. The first launch copies PPSSPP's support files to `/Bios/PSP/PPSSPP`. Saves go to `/Saves/PSP`.
 
-> Devices with a physical power switch
-> use MENU to sleep and wake instead of
-> POWER. Once asleep the device can safely
-> be powered off manually with the switch.
+If something goes wrong, point your agent at `/.userdata/rg35xxplus/logs/PSP.txt`.
 
-## Supported consoles
+## How it works
 
-Base:
+MinUI is 32-bit on these devices, but the stock GPU driver is 64-bit only. The pak ships its own 64-bit minarch (same source), MinUI's SDL2 fork and libmsettings; the rest of MinUI is untouched.
 
-- Game Boy
-- Game Boy Color
-- Game Boy Advance
-- Nintendo Entertainment System
-- Super Nintendo Entertainment System
-- Sega Genesis
-- PlayStation
+PPSSPP renders with OpenGL ES 2 into a framebuffer minarch owns. minarch reads each frame back into its normal pipeline, so scaling, effects, the menu, state thumbnails, HDMI and RG28XX rotation work as usual.
 
-Extras:
+## Building
 
-- Neo Geo Pocket (and Color)
-- Pico-8
-- Pokémon mini
-- Sega Game Gear
-- Sega Master System
-- Super Game Boy
-- TurboGrafx-16 (and TurboGrafx-CD)
-- Virtual Boy
+Needs Docker on an arm64 host (Apple Silicon or arm64 Linux).
 
-## Supported Devices
+    make psp64 PLATFORM=rg35xxplus
 
-| Device | Added | Status |
-| -- | -- | -- |
-| Anbernic RG28xx | MinUI-20240429b-2 | Legacy |
-| Anbernic RG34xx | MinUI-20241227-0 | Legacy |
-| Anbernic RG34xxSP | MinUI-20250920-0 | Legacy |
-| Anbernic RG35xx | MinUI-20230922b-2 | Legacy |
-| Anbernic RG35xx Plus | MinUI-20240106b-0 | Legacy |
-| Anbernic RG35xxH | MinUI-20240120b-1 | Legacy |
-| Anbernic RG35xxSP | MinUI-20240525-0 | Legacy |
-| Anbernic RG40xxH | MinUI-20240717-1 | Legacy |
-| Anbernic RG40xxV | MinUI-20240831-0 | Legacy | 
-| Anbernic RG CubeXX | MinUI-202401028-0 | Legacy | 
-| GKD Pixel | MinUI-20240120b-1 | Legacy |
-| M17 | MinUI-20231126b-2 | Legacy |
-| MagicX XU Mini M | MinUI-20240831-0 | Legacy | 
-| MagicX Mini Zero 28 | MinUI-20250111-0 | Legacy |
-| Miyoo A30 | MinUI-20240705-0 | Legacy |
-| Miyoo Flip | MinUI-20250111-0 | Legacy |
-| Miyoo Mini | MinUI-20230922b-2 | Legacy |
-| Miyoo Mini Flip | MinUI-20251023-0 | Legacy |
-| Miyoo Mini Plus | MinUI-20230922b-2 | Legacy |
-| Powkiddy RGB30 | MinUI-20231014b-1 | Legacy |
-| Trimui Brick | MinUI-20241028-0 | Legacy |
-| Trimui Smart | MinUI-20230922b-2 | Legacy |
-| Trimui Smart Pro | MinUI-20231111b-2 | Legacy |
+Output: `workspace/rg35xxplus/psp64/output/PSP.pak-rg35xxplus.zip`.
 
-> [!NOTE]
-> **Active** actively working on compatibility and improvements specific to this device  
-> **Maintained** inheriting improvements to common functionality  
-> **Legacy** will be retired in a future update  
-> **Retired** removed from repo, no longer updated or packaged with new releases
+The build checks the binaries against the stock firmware's libraries and boots homebrew through both renderers; it fails if anything is off. Inputs are pinned: PPSSPP `v1.20.4` plus one patch (`workspace/all/cores/patches/ppsspp`), the SDL fork commit, libretro-common, and the Ubuntu image digest.
 
-## Legacy versions
+Code: `workspace/rg35xxplus/psp64` (build) and `workspace/all/minarch/minarch.c` (GLES support, `HAS_GLES` only).
 
-The original Trimui Model S version of MinUI (2021/04/03-2021/08/06) has been archived [here](https://github.com/shauninman/MinUI-Legacy-Trimui-Model-S).
+## License
 
-The sequel, MiniUI for the Miyoo Mini (2022/04/20-2022/10/23), has been archived [here](https://github.com/shauninman/MiniUI-Legacy-Miyoo-Mini).
-
-The return of MinUI for the original Anbernic RG35XX (2023/02/26-2023/03/26) has been archived [here](https://github.com/shauninman/MinUI-Legacy-RG35XX).
-
-The current MinUI which introduced support for multiple devices starting with the Trimui Smart, Miyoo Mini (and Plus), and the original Anbernic RG35XX was released on [2023/09/22][init-release] with the initial functional commit 6 months earlier on [2023/03/27][init-commit].
-
-[init-release]:https://github.com/shauninman/MinUI/releases/tag/v20230922b-2
-[init-commit]:https://github.com/shauninman/MinUI/commit/53e0296ea5a2794290fb5783765af6cee0063445#diff-b993e61ab6e66a19b67c88cfb98261aa9267d250de8bb56463662f67aae1a558
+This fork's changes are MIT, see [LICENSE](LICENSE). Upstream MinUI code keeps its original terms. The release zip includes PPSSPP (GPL-2.0-or-later, built from the `v1.20.4` tag plus the patch above) and SDL (zlib).

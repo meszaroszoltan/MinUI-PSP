@@ -103,4 +103,4 @@ But if a binary takes more than one second to initialize you might need to just 
 
 # Caveats
 
-MinUI currently only supports the RGB565 pixel format and does not implement the OpenGL libretro APIs. It may be possible to use the stock firmware's retroarch instead of MinUI's minarch to run certain cores but that is left as an exercise for the reader.
+MinUI's minarch draws in RGB565. Cores that output XRGB8888 or render with OpenGL ES 2/3 (`RETRO_ENVIRONMENT_SET_HW_RENDER`) are only supported by GLES-enabled builds (`HAS_GLES`, currently just the 64-bit minarch in the rg35xxplus PSP.pak), which read each hardware frame back into the normal RGB565 pipeline. Desktop OpenGL and Vulkan cores are not supported.

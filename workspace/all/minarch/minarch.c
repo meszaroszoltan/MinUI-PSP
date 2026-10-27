@@ -13,6 +13,11 @@
 #include <zlib.h>
 #include <pthread.h>
 
+#ifdef HAS_GLES
+#include <GLES2/gl2.h>
+#include <GLES2/gl2ext.h>
+#endif
+
 #include "libretro.h"
 #include "defines.h"
 #include "api.h"
@@ -82,6 +87,8 @@ static struct Core {
 	double fps;
 	double sample_rate;
 	double aspect_ratio;
+	int max_width;
+	int max_height;
 	
 	void* handle;
 	void (*init)(void);
@@ -105,6 +112,37 @@ static struct Core {
 	
 	// retro_audio_buffer_status_callback_t audio_buffer_status;
 } core;
+
+#ifdef HAS_GLES
+// hw rendering cores draw into our fbo which is read back into the 565 pipeline
+static struct {
+	int enabled;
+	int depth; // HW_begin/HW_end nesting
+	int packed; // GL_OES_packed_depth_stencil
+	struct retro_hw_render_callback cb;
+	SDL_GLContext ctx; // core's context
+	SDL_GLContext prev; // SDL_Renderer's context
+	GLuint fbo, tex, rb;
+	int fbo_w, fbo_h;
+	uint8_t* readback; // fbo_w*fbo_h*4
+} hw;
+static void HW_begin(void) { // around anything that calls into the core
+	if (!hw.ctx) return;
+	hw.depth += 1;
+	if (SDL_GL_GetCurrentContext()!=hw.ctx) SDL_GL_MakeCurrent(PLAT_getWindow(), hw.ctx);
+}
+static void HW_end(void) {
+	if (!hw.ctx) return;
+	if (!--hw.depth) SDL_GL_MakeCurrent(PLAT_getWindow(), hw.prev);
+}
+static void HW_resume(void) { // SDL_Renderer takes its context back when it draws, eg. faux sleep from inside core.run()
+	if (hw.ctx && hw.depth && SDL_GL_GetCurrentContext()!=hw.ctx) SDL_GL_MakeCurrent(PLAT_getWindow(), hw.ctx);
+}
+#else
+#define HW_begin()
+#define HW_end()
+#define HW_resume()
+#endif
 
 ///////////////////////////////////////
 // based on picoarch/unzip.c
@@ -485,8 +523,9 @@ static void State_getPath(char* filename) {
 	sprintf(filename, "%s/%s.st%i", core.states_dir, game.name, state_slot);
 }
 static void State_read(void) { // from picoarch
+	HW_begin();
 	size_t state_size = core.serialize_size();
-	if (!state_size) return;
+	if (!state_size) { HW_end(); return; }
 
 	int was_ff = fast_forward;
 	fast_forward = 0;
@@ -525,10 +564,12 @@ error:
 	if (state_file) fclose(state_file);
 	
 	fast_forward = was_ff;
+	HW_end();
 }
 static void State_write(void) { // from picoarch
+	HW_begin();
 	size_t state_size = core.serialize_size();
-	if (!state_size) return;
+	if (!state_size) { HW_end(); return; }
 	
 	int was_ff = fast_forward;
 	fast_forward = 0;
@@ -565,6 +606,7 @@ error:
 	sync();
 	
 	fast_forward = was_ff;
+	HW_end();
 }
 static void State_autosave(void) {
 	int last_state_slot = state_slot;
@@ -1633,6 +1675,7 @@ static void Menu_afterSleep(void);
 
 static void Menu_saveState(void);
 static void Menu_loadState(void);
+void Core_reset(void);
 
 static int setFastForward(int enable) {
 	if (!fast_forward && enable && thread_video) {
@@ -1656,6 +1699,7 @@ static void input_poll_callback(void) {
 
 	int show_setting = 0;
 	PWR_update(NULL, &show_setting, Menu_beforeSleep, Menu_afterSleep);
+	HW_resume();
 
 	// I _think_ this can stay as is...
 	if (PAD_justPressed(BTN_MENU)) {
@@ -1709,7 +1753,7 @@ static void input_poll_callback(void) {
 				switch (i) {
 					case SHORTCUT_SAVE_STATE: Menu_saveState(); break;
 					case SHORTCUT_LOAD_STATE: Menu_loadState(); break;
-					case SHORTCUT_RESET_GAME: core.reset(); break;
+					case SHORTCUT_RESET_GAME: Core_reset(); break;
 					case SHORTCUT_SAVE_QUIT:
 						Menu_saveState();
 						quit = 1;
@@ -1857,6 +1901,66 @@ static bool set_rumble_state(unsigned port, enum retro_rumble_effect effect, uin
 	VIB_setStrength(strength);
 	return 1;
 }
+#ifdef HAS_GLES
+static uintptr_t HW_getCurrentFramebuffer(void) {
+	return hw.fbo;
+}
+static retro_proc_address_t HW_getProcAddress(const char* sym) {
+	return (retro_proc_address_t)SDL_GL_GetProcAddress(sym);
+}
+static int HW_allocFBO(int w, int h) { // expects hw.ctx to be current
+	glBindTexture(GL_TEXTURE_2D, hw.tex);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+	glBindTexture(GL_TEXTURE_2D, 0);
+	
+	glBindFramebuffer(GL_FRAMEBUFFER, hw.fbo);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, hw.tex, 0);
+	if (hw.rb) {
+		glBindRenderbuffer(GL_RENDERBUFFER, hw.rb);
+		glRenderbufferStorage(GL_RENDERBUFFER, hw.packed ? GL_DEPTH24_STENCIL8_OES : GL_DEPTH_COMPONENT16, w, h);
+		glBindRenderbuffer(GL_RENDERBUFFER, 0);
+		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, hw.rb);
+		if (hw.packed) glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, hw.rb);
+	}
+	GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+	if (status==GL_FRAMEBUFFER_COMPLETE) {
+		glClearColor(0,0,0,1);
+		glClear(GL_COLOR_BUFFER_BIT);
+	}
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	if (status!=GL_FRAMEBUFFER_COMPLETE) {
+		LOG_error("HW_allocFBO(%i,%i): incomplete framebuffer 0x%x\n", w,h, status);
+		return 0;
+	}
+	
+	if (hw.readback) free(hw.readback);
+	hw.readback = malloc(w * h * 4);
+	hw.fbo_w = w;
+	hw.fbo_h = h;
+	LOG_info("HW_allocFBO(%i,%i) packed: %i\n", w,h, hw.packed);
+	return 1;
+}
+static void Core_setGeometry(const struct retro_game_geometry* geometry, int resize) {
+	if (!geometry) return;
+	double a = geometry->aspect_ratio;
+	if (a<=0) a = (double)geometry->base_width / geometry->base_height;
+	core.aspect_ratio = a;
+	if (resize) {
+		core.max_width = geometry->max_width;
+		core.max_height = geometry->max_height;
+		if (hw.fbo && (core.max_width>hw.fbo_w || core.max_height>hw.fbo_h)) {
+			HW_begin();
+			HW_allocFBO(MAX(core.max_width,hw.fbo_w), MAX(core.max_height,hw.fbo_h));
+			HW_end();
+		}
+	}
+	renderer.dst_p = 0; // force selectScaler
+	LOG_info("geometry: %ix%i (max %ix%i) aspect_ratio: %f\n", geometry->base_width,geometry->base_height, geometry->max_width,geometry->max_height, a);
+}
+#endif
+
 static bool environment_callback(unsigned cmd, void *data) { // copied from picoarch initially
 	// LOG_info("environment_callback: %i\n", cmd);
 	
@@ -1896,10 +2000,17 @@ static bool environment_callback(unsigned cmd, void *data) { // copied from pico
 	case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT: { /* 10 */
 		const enum retro_pixel_format *format = (enum retro_pixel_format *)data;
 
-		if (*format != RETRO_PIXEL_FORMAT_RGB565) { // TODO: pull from platform.h?
+		if (*format == RETRO_PIXEL_FORMAT_RGB565) { // TODO: pull from platform.h?
+			downsample = 0;
+		}
+#ifdef HAS_GLES
+		else if (*format == RETRO_PIXEL_FORMAT_XRGB8888) {
+			downsample = 1;
+		}
+#endif
+		else {
 			/* 565 is only supported format */
 			return false;
-			// downsample = 1; // TODO: not ready for primetime yet
 		}
 		break;
 	}
@@ -1908,6 +2019,22 @@ static bool environment_callback(unsigned cmd, void *data) { // copied from pico
 		Input_init((const struct retro_input_descriptor *)data);
 		return false;
 	} break;
+#ifdef HAS_GLES
+	case RETRO_ENVIRONMENT_SET_HW_RENDER: { /* 14 */
+		struct retro_hw_render_callback *cb = (struct retro_hw_render_callback *)data;
+		if (!cb) return false;
+		if (!(cb->context_type==RETRO_HW_CONTEXT_OPENGLES2 || cb->context_type==RETRO_HW_CONTEXT_OPENGLES3 || (cb->context_type==RETRO_HW_CONTEXT_OPENGLES_VERSION && cb->version_major<=3))) {
+			LOG_info("unsupported hw context type: %i (%i.%i)\n", cb->context_type, cb->version_major, cb->version_minor);
+			return false;
+		}
+		cb->get_current_framebuffer = HW_getCurrentFramebuffer;
+		cb->get_proc_address = HW_getProcAddress;
+		memcpy(&hw.cb, cb, sizeof(struct retro_hw_render_callback));
+		hw.enabled = 1;
+		LOG_info("hw render: type: %i depth: %i stencil: %i bottom_left_origin: %i\n", cb->context_type, cb->depth, cb->stencil, cb->bottom_left_origin);
+		break;
+	}
+#endif
 	case RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE: { /* 13 */
 		const struct retro_disk_control_callback *var =
 			(const struct retro_disk_control_callback *)data;
@@ -2009,6 +2136,21 @@ static bool environment_callback(unsigned cmd, void *data) { // copied from pico
 	}
 	// RETRO_ENVIRONMENT_SET_MEMORY_MAPS (36 | RETRO_ENVIRONMENT_EXPERIMENTAL)
 	// RETRO_ENVIRONMENT_GET_LANGUAGE 39
+#ifdef HAS_GLES
+	case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO: { /* 32 */
+		const struct retro_system_av_info *info = (const struct retro_system_av_info *)data;
+		if (!info) return false;
+		if (info->timing.fps!=core.fps) LOG_info("ignoring fps change: %f\n", info->timing.fps);
+		Core_setGeometry(&info->geometry, 1);
+		break;
+	}
+	case RETRO_ENVIRONMENT_SET_GEOMETRY: { /* 37 */
+		const struct retro_game_geometry *geometry = (const struct retro_game_geometry *)data;
+		if (!geometry) return false;
+		Core_setGeometry(geometry, 0);
+		break;
+	}
+#endif
 	case RETRO_ENVIRONMENT_GET_CURRENT_SOFTWARE_FRAMEBUFFER: { /* (40 | RETRO_ENVIRONMENT_EXPERIMENTAL) */
 		// puts("RETRO_ENVIRONMENT_GET_CURRENT_SOFTWARE_FRAMEBUFFER");
 		break;
@@ -2028,6 +2170,11 @@ static bool environment_callback(unsigned cmd, void *data) { // copied from pico
 	}
 	
 	// RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS (42 | RETRO_ENVIRONMENT_EXPERIMENTAL)
+#ifdef HAS_GLES
+	case RETRO_ENVIRONMENT_SET_HW_SHARED_CONTEXT: { /* (44 | RETRO_ENVIRONMENT_EXPERIMENTAL) */
+		break;
+	}
+#endif
 	// RETRO_ENVIRONMENT_GET_VFS_INTERFACE (45 | RETRO_ENVIRONMENT_EXPERIMENTAL)
 	// RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE (47 | RETRO_ENVIRONMENT_EXPERIMENTAL)
 	// RETRO_ENVIRONMENT_GET_INPUT_BITMASKS (51 | RETRO_ENVIRONMENT_EXPERIMENTAL)
@@ -2067,6 +2214,14 @@ static bool environment_callback(unsigned cmd, void *data) { // copied from pico
 	// 	if (display) OptionList_setOptionVisibility(&config.core, display->key, display->visible);
 		break;
 	}
+#ifdef HAS_GLES
+	case RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER: { /* 56 */
+		// same as RetroArch's gl driver (even on GLES), ppsspp only tries GL when it sees this
+		unsigned *out = (unsigned *)data;
+		if (out) *out = RETRO_HW_CONTEXT_OPENGL;
+		break;
+	}
+#endif
 	case RETRO_ENVIRONMENT_GET_DISK_CONTROL_INTERFACE_VERSION: { /* 57 */
 		unsigned *out =	(unsigned *)data;
 		if (out) *out = 1;
@@ -2502,20 +2657,26 @@ static uint32_t sec_start = 0;
 	static int fit = 0;
 #endif	
 
-// buffer to convert xrgb8888 to rgb565
+// buffer to convert xrgb8888 (or hw readback) to rgb565
 static void* buffer = NULL;
+static int buffer_size = 0;
 static void buffer_dealloc(void) {
 	if (!buffer) return;
 	free(buffer);
 	buffer = NULL;
+	buffer_size = 0;
 }
-static void buffer_realloc(int w, int h, int p) {
+static void buffer_realloc(int w, int h) {
+	int size = (w * FIXED_BPP) * h;
+	if (buffer && size<=buffer_size) return; // only grows, renderer.src may point into it
 	buffer_dealloc();
-	buffer = malloc((w * FIXED_BPP) * h);
-	// LOG_info("buffer_realloc(%i,%i,%i)\n", w,h,p);
+	buffer = malloc(size);
+	buffer_size = size;
+	// LOG_info("buffer_realloc(%i,%i)\n", w,h);
 }
 static void buffer_downsample(const void *data, unsigned width, unsigned height, size_t pitch) {
 	// from picoarch! https://git.crowdedwood.com/picoarch/tree/video.c#n51
+	buffer_realloc(width,height);
 	const uint32_t *input = data;
 	uint16_t *output = buffer;
 	size_t extra = pitch / sizeof(uint32_t) - width;
@@ -2535,8 +2696,6 @@ static void buffer_downsample(const void *data, unsigned width, unsigned height,
 
 static void selectScaler(int src_w, int src_h, int src_p) {
 	LOG_info("selectScaler\n");
-	
-	if (downsample) buffer_realloc(src_w,src_h,src_p);
 	
 	int src_x,src_y,dst_x,dst_y,dst_w,dst_h,dst_p,scale;
 	double aspect;
@@ -2770,7 +2929,15 @@ static void selectScaler(int src_w, int src_h, int src_p) {
 		screen = GFX_resize(dst_w,dst_h,dst_p);
 	// }
 }
-static void video_refresh_callback_main(const void *data, unsigned width, unsigned height, size_t pitch) {
+static uint32_t last_flip_time = 0;
+static int skipFrame(void) {
+	// 10 seems to be the sweet spot that allows 2x in NES and SNES and 8x in GB at 60fps
+	// 14 will let GB hit 10x but NES and SNES will drop to 1.5x at 30fps (not sure why)
+	// but 10 hurts PS...
+	// TODO: 10 was based on rg35xx, probably different results on other supported platforms
+	return fast_forward && SDL_GetTicks()-last_flip_time<10;
+}
+static void video_refresh_callback_main(const void *data, unsigned width, unsigned height, size_t pitch) { // data is always 565
 	// return;
 	
 	Special_render();
@@ -2778,13 +2945,7 @@ static void video_refresh_callback_main(const void *data, unsigned width, unsign
 	// static int tmp_frameskip = 0;
 	// if ((tmp_frameskip++)%2) return;
 	
-	static uint32_t last_flip_time = 0;
-	
-	// 10 seems to be the sweet spot that allows 2x in NES and SNES and 8x in GB at 60fps
-	// 14 will let GB hit 10x but NES and SNES will drop to 1.5x at 30fps (not sure why)
-	// but 10 hurts PS...
-	// TODO: 10 was based on rg35xx, probably different results on other supported platforms
-	if (fast_forward && SDL_GetTicks()-last_flip_time<10) return;
+	if (skipFrame()) return;
 	
 	// FFVII menus 
 	// 16: 30/200
@@ -2799,8 +2960,6 @@ static void video_refresh_callback_main(const void *data, unsigned width, unsign
 	if (!data) return;
 
 	fps_ticks += 1;
-	
-	if (downsample) pitch /= 2; // everything expects 16 but we're downsampling from 32
 	
 	// if source has changed size (or forced by dst_p==0)
 	// eg. true src + cropped src + fixed dst + cropped dst
@@ -2830,13 +2989,7 @@ static void video_refresh_callback_main(const void *data, unsigned width, unsign
 		blitBitmapText(debug_text,-x,-y,(uint16_t*)data,pitch/2, width,height);
 	}
 	
-	if (downsample) {
-		buffer_downsample(data,width,height,pitch*2);
-		renderer.src = buffer;
-	}
-	else {
-		renderer.src = (void*)data;
-	}
+	renderer.src = (void*)data;
 	renderer.dst = screen->pixels;
 	// LOG_info("video_refresh_callback: %ix%i@%i %ix%i@%i\n",width,height,pitch,screen->w,screen->h,screen->pitch);
 	
@@ -2845,9 +2998,29 @@ static void video_refresh_callback_main(const void *data, unsigned width, unsign
 	if (!thread_video) GFX_flip(screen);
 	last_flip_time = SDL_GetTicks();
 }
-static void video_refresh_callback(const void *data, unsigned width, unsigned height, size_t pitch) {
-	if (!data) return;
+#ifdef HAS_GLES
+static void HW_readback(unsigned width, unsigned height) { // into buffer as 565, expects hw.ctx to be current
+	GLint fb, align;
+	glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fb);
+	glGetIntegerv(GL_PACK_ALIGNMENT, &align);
+	glBindFramebuffer(GL_FRAMEBUFFER, hw.fbo);
+	glPixelStorei(GL_PACK_ALIGNMENT, 4);
+	glReadPixels(0,0, width,height, GL_RGBA,GL_UNSIGNED_BYTE, hw.readback);
+	glPixelStorei(GL_PACK_ALIGNMENT, align);
+	glBindFramebuffer(GL_FRAMEBUFFER, fb);
 	
+	buffer_realloc(width,height);
+	uint16_t* dst = buffer;
+	for (int y=0; y<height; y++) {
+		const uint8_t* src = hw.readback + (hw.cb.bottom_left_origin ? height-1-y : y) * width * 4;
+		for (int x=0; x<width; x++) {
+			*dst++ = ((src[0] & 0xF8) << 8) | ((src[1] & 0xFC) << 3) | (src[2] >> 3);
+			src += 4;
+		}
+	}
+}
+#endif
+static void video_refresh_565(const void *data, unsigned width, unsigned height, size_t pitch) {
 	if (thread_video) {
 		pthread_mutex_lock(&core_mx);
 		
@@ -2868,6 +3041,32 @@ static void video_refresh_callback(const void *data, unsigned width, unsigned he
 		pthread_mutex_unlock(&core_mx);
 	}
 	else video_refresh_callback_main(data,width,height,pitch);
+}
+static void video_refresh_callback(const void *data, unsigned width, unsigned height, size_t pitch) {
+	if (!data) return;
+	
+#ifdef HAS_GLES
+	if (data==RETRO_HW_FRAME_BUFFER_VALID) {
+		if (!hw.enabled || !hw.ctx || skipFrame()) return;
+		if (width>hw.fbo_w) width = hw.fbo_w;
+		if (height>hw.fbo_h) height = hw.fbo_h;
+		HW_readback(width,height);
+		// SDL_Renderer gets its context back for the blit and flip
+		SDL_GL_MakeCurrent(PLAT_getWindow(), hw.prev);
+		video_refresh_callback_main(buffer,width,height,width*FIXED_BPP);
+		HW_resume();
+		return;
+	}
+#endif
+	
+	if (downsample) {
+		if (skipFrame()) return;
+		buffer_downsample(data,width,height,pitch);
+		data = buffer;
+		pitch = width * FIXED_BPP;
+	}
+	
+	video_refresh_565(data,width,height,pitch);
 }
 ///////////////////////////////
 
@@ -2981,11 +3180,94 @@ void Core_load(void) {
 	double a = av_info.geometry.aspect_ratio;
 	if (a<=0) a = (double)av_info.geometry.base_width / av_info.geometry.base_height;
 	core.aspect_ratio = a;
+	core.max_width = av_info.geometry.max_width;
+	core.max_height = av_info.geometry.max_height;
 	
 	LOG_info("aspect_ratio: %f (%ix%i) fps: %f\n", a, av_info.geometry.base_width,av_info.geometry.base_height, core.fps);
 }
+#ifdef HAS_GLES
+static void HW_quit(void) {
+	if (hw.ctx) {
+		SDL_Window* window = PLAT_getWindow();
+		SDL_GL_MakeCurrent(window, hw.ctx);
+		if (hw.fbo) glDeleteFramebuffers(1, &hw.fbo);
+		if (hw.rb) glDeleteRenderbuffers(1, &hw.rb);
+		if (hw.tex) glDeleteTextures(1, &hw.tex);
+		SDL_GL_MakeCurrent(window, hw.prev);
+		SDL_GL_DeleteContext(hw.ctx);
+	}
+	if (hw.readback) free(hw.readback);
+	hw.ctx = NULL;
+	hw.fbo = hw.rb = hw.tex = 0;
+	hw.readback = NULL;
+	hw.depth = 0;
+}
+static int HW_init(void) { // after Core_load, the core only requested a context during load_game
+	if (!hw.enabled) return 1;
+	LOG_info("HW_init\n");
+	
+	SDL_Window* window = PLAT_getWindow();
+	hw.prev = SDL_GL_GetCurrentContext();
+	
+	int major = 2;
+	int minor = 0;
+	if (hw.cb.context_type==RETRO_HW_CONTEXT_OPENGLES3) major = 3;
+	else if (hw.cb.context_type==RETRO_HW_CONTEXT_OPENGLES_VERSION) {
+		major = hw.cb.version_major;
+		minor = hw.cb.version_minor;
+	}
+	
+	int old_profile, old_major, old_minor;
+	SDL_GL_GetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, &old_profile);
+	SDL_GL_GetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, &old_major);
+	SDL_GL_GetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, &old_minor);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, major);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, minor);
+	hw.ctx = SDL_GL_CreateContext(window); // also makes it current
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, old_profile);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, old_major);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, old_minor);
+	
+	if (!hw.ctx) {
+		LOG_error("HW_init: SDL_GL_CreateContext(GLES %i.%i) failed: %s\n", major,minor, SDL_GetError());
+		goto fail;
+	}
+	SDL_GL_MakeCurrent(window, hw.ctx);
+	LOG_info("GL_VERSION: %s\nGL_RENDERER: %s\n", glGetString(GL_VERSION), glGetString(GL_RENDERER));
+	
+	const char* extensions = (const char*)glGetString(GL_EXTENSIONS);
+	hw.packed = extensions && strstr(extensions, "GL_OES_packed_depth_stencil")!=NULL;
+	
+	glGenFramebuffers(1, &hw.fbo);
+	glGenTextures(1, &hw.tex);
+	if (hw.cb.depth || hw.cb.stencil) glGenRenderbuffers(1, &hw.rb);
+	
+	int w = core.max_width;
+	int h = core.max_height;
+	if (w<=0 || h<=0) {
+		w = DEVICE_WIDTH;
+		h = DEVICE_HEIGHT;
+	}
+	if (!HW_allocFBO(w,h)) {
+		SDL_GL_MakeCurrent(window, hw.prev);
+		goto fail;
+	}
+	
+	if (hw.cb.context_reset) hw.cb.context_reset();
+	SDL_GL_MakeCurrent(window, hw.prev);
+	return 1;
+	
+fail:
+	HW_quit();
+	hw.enabled = 0;
+	return 0;
+}
+#endif
 void Core_reset(void) {
+	HW_begin();
 	core.reset();
+	HW_end();
 }
 void Core_unload(void) {
 	SND_quit();
@@ -2994,10 +3276,18 @@ void Core_quit(void) {
 	if (core.initialized) {
 		SRAM_write();
 		RTC_write();
+		HW_begin();
+#ifdef HAS_GLES
+		if (hw.ctx && hw.cb.context_destroy) hw.cb.context_destroy();
+#endif
 		core.unload_game();
 		core.deinit();
+		HW_end();
 		core.initialized = 0;
 	}
+#ifdef HAS_GLES
+	HW_quit();
+#endif
 }
 void Core_close(void) {
 	if (core.handle) dlclose(core.handle);
@@ -4359,7 +4649,7 @@ static void Menu_loop(void) {
 				break;
 				case ITEM_OPTS: {
 					if (simple_mode) {
-						core.reset();
+						Core_reset();
 						status = STATUS_RESET;
 						show_menu = 0;
 					}
@@ -4549,7 +4839,7 @@ static void Menu_loop(void) {
 		}
 		GFX_setEffect(screen_effect);
 		GFX_clear(screen);
-		video_refresh_callback(renderer.src, renderer.true_w, renderer.true_h, renderer.src_p);
+		video_refresh_565(renderer.src, renderer.true_w, renderer.true_h, renderer.src_p);
 		
 		setOverclock(overclock); // restore overclock value
 		if (rumble_strength) VIB_setStrength(rumble_strength);
@@ -4644,6 +4934,13 @@ static void limitFF(void) {
 	last_time = now;
 }
 
+static int canThreadVideo(void) {
+#ifdef HAS_GLES
+	if (hw.enabled) return 0;
+#endif
+	return !downsample;
+}
+
 static void* coreThread(void *arg) {
 	// force a vsync immediately before loop
 	// for better frame pacing?
@@ -4657,7 +4954,9 @@ static void* coreThread(void *arg) {
 		pthread_mutex_unlock(&core_mx);
 		
 		if (run) {
+			HW_begin();
 			core.run();
+			HW_end();
 			limitFF();
 			trackFPS();
 		}
@@ -4719,6 +5018,12 @@ int main(int argc , char* argv[]) {
 	options_menu.items[1].desc = (char*)core.version;
 	
 	Core_load();
+#ifdef HAS_GLES
+	if (!HW_init()) {
+		Menu_message("Unable to start the GPU renderer.\nSee the log for details.", (char*[]){ "B","BACK", NULL });
+		goto finish;
+	}
+#endif
 	Input_init(NULL);
 	Config_readOptions(); // but others load and report options later (eg. nes)
 	Config_readControls(); // restore controls (after the core has reported its defaults)
@@ -4751,7 +5056,9 @@ int main(int argc , char* argv[]) {
 		GFX_startFrame();
 		
 		if (!thread_video) {
+			HW_begin();
 			core.run();
+			HW_end();
 			limitFF();
 			trackFPS();
 		}
@@ -4770,6 +5077,8 @@ int main(int argc , char* argv[]) {
 		
 		if (show_menu) Menu_loop();
 		
+		// converted frames (8888 or hw) are never threaded, the backbuffer expects the core's 565 data
+		if (toggle_thread && !canThreadVideo()) toggle_thread = 0;
 		if (toggle_thread) {
 			toggle_thread = 0;
 			if (was_threaded && !thread_video) {
