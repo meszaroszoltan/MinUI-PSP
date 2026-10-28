@@ -3,7 +3,7 @@
 A fork of [MinUI](https://github.com/shauninman/MinUI) that adds `PSP.pak`: PPSSPP running inside minarch, so PSP games get MinUI's in-game menu, save states and auto-resume.
 
 Aimed for devices that use MinUI's `rg35xxplus` folder (H700: eg. RG35XX Plus, RG28XX, RG34XX, RG CubeXX). Tested on the RG28XX with Puzzle Quest: Challenge of the Warlords and Persona 3 Portable.
-<img width="2048" height="1536" alt="092E8A46-67B8-442A-BEE6-B231F4D877AF_1_102_o" src="https://github.com/user-attachments/assets/e4e6ad6b-bd56-4bcf-97a6-661f2c9391c9" />
+<img width="1228" height="921" alt="092E8A46-67B8-442A-BEE6-B231F4D877AF_1_102_o" src="https://github.com/user-attachments/assets/e4e6ad6b-bd56-4bcf-97a6-661f2c9391c9" />
 
 
 ## Install
