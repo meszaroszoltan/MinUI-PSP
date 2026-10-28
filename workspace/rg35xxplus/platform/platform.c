@@ -852,6 +852,9 @@ void PLAT_flip(SDL_Surface* IGNORED, int ignored) {
 }
 
 int PLAT_supportsOverscan(void) { return is_cubexx; }
+#ifdef HAS_GLES
+SDL_Window* PLAT_getWindow(void) { return vid.window; }
+#endif
 
 ///////////////////////////////
 

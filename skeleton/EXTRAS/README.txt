@@ -28,6 +28,15 @@ MGBA: gba_bios.bin
  SGB: sgb.bios
 
 ----------------------------------------
+PSP.pak (RG35XX Plus family only)
+
+PSP.pak runs PPSSPP on the H700 devices that use the "/Emus/rg35xxplus" folder (eg. RG35XX Plus, RG28XX, RG34XX, RG CubeXX, not the original RG35XX). It uses the GPU, so unlike the other paks it ships its own 64-bit copy of minarch, but the in-game menu, save states, and auto-resume work the same as everywhere else.
+
+Copy "/Emus/rg35xxplus/PSP.pak" to your SD card and place ISO, CSO, PBP, or CHD files in "/Roms/Sony PlayStation Portable (PSP)/". No bios is required. The first launch copies PPSSPP's support files into "/Bios/PSP/PPSSPP/" which takes a moment.
+
+PSP games are demanding, expect some titles to run below full speed.
+
+----------------------------------------
 Native PICO-8 and Splore.pak (RGB30-only)
 
 Download the official PICO-8 fantasy console for the Raspberry Pi from https://lexaloffle.itch.io/pico-8 (If you've bought a bundle on itch.io any time in the last few years you might already have a copy in your library https://itch.io/my-collections) At the time of writing, the file is named "pico-8_0.2.5g_raspi.zip". Copy that zip file into "/Tools/rgb30/Splore.pak/". Copy "/Emus/rgb30/P8-NATIVE.pak", "/Tools/rgb30/Splore.pak", and "/Tools/rgb30/Wi-Fi.pak" to your SD card. (You need the Wi-Fi.pak to download PICO-8 games in Splore.pak.)

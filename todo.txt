@@ -448,8 +448,9 @@ next
 		n64
 			requires libretro opengl implementation
 		psp
-			after adding xrgb8888 support to MinUI it still chokes on a number of missing libraries 
-			and eventually an unlinked function (something like XUnlockMutex)
+			done for rg35xxplus: PSP.pak ships a 64-bit minarch (HAS_GLES, gles hw render with readback)
+			built in workspace/rg35xxplus/psp64 against the stock aarch64 userland
+			other platforms would need their own 64-bit gles stack
 		
 	user reported
 		random reports of minui not booting reliably 

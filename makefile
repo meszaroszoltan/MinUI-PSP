@@ -55,6 +55,16 @@ system:
 	cp ./workspace/all/clock/build/$(PLATFORM)/clock.elf ./build/EXTRAS/Tools/$(PLATFORM)/Clock.pak/
 	cp ./workspace/all/minput/build/$(PLATFORM)/minput.elf ./build/EXTRAS/Tools/$(PLATFORM)/Input.pak/
 
+# 64-bit minarch + ppsspp for PSP.pak, built natively in an arm64 ubuntu:22.04 image (matches stock glibc)
+psp64:
+ifeq ($(PLATFORM), rg35xxplus)
+	# ----------------------------------------------------
+	git rev-parse --short HEAD > ./workspace/hash.txt
+	docker build --platform linux/arm64 -t minui-psp64 ./workspace/rg35xxplus/psp64
+	docker run --rm --platform linux/arm64 -v $(shell pwd)/workspace:/root/workspace -v $(shell pwd)/skeleton:/root/skeleton:ro minui-psp64 make -C /root/workspace/rg35xxplus/psp64
+	# ----------------------------------------------------
+endif
+
 cores: # TODO: can't assume every platform will have the same stock cores (platform should be responsible for copy too)
 	# stock cores
 	cp ./workspace/$(PLATFORM)/cores/output/fceumm_libretro.so ./build/SYSTEM/$(PLATFORM)/cores
@@ -82,8 +92,16 @@ ifneq ($(PLATFORM),gkdpixel)
 	cp ./workspace/$(PLATFORM)/cores/output/mednafen_supafaust_libretro.so ./build/EXTRAS/Emus/$(PLATFORM)/SUPA.pak
 	cp ./workspace/$(PLATFORM)/cores/output/mednafen_vb_libretro.so ./build/EXTRAS/Emus/$(PLATFORM)/VB.pak
 endif
+ifeq ($(PLATFORM), rg35xxplus)
+	cp ./workspace/$(PLATFORM)/psp64/output/minarch64.elf ./build/EXTRAS/Emus/$(PLATFORM)/PSP.pak
+	cp ./workspace/$(PLATFORM)/psp64/output/ppsspp_libretro.so ./build/EXTRAS/Emus/$(PLATFORM)/PSP.pak
+	mkdir -p ./build/EXTRAS/Emus/$(PLATFORM)/PSP.pak/lib
+	cp ./workspace/$(PLATFORM)/psp64/output/lib/libSDL2-2.0.so.0 ./build/EXTRAS/Emus/$(PLATFORM)/PSP.pak/lib
+	cp ./workspace/$(PLATFORM)/psp64/output/lib/libmsettings.so ./build/EXTRAS/Emus/$(PLATFORM)/PSP.pak/lib
+	cp -R ./workspace/$(PLATFORM)/psp64/output/assets ./build/EXTRAS/Emus/$(PLATFORM)/PSP.pak
+endif
 
-common: build system cores
+common: build system psp64 cores
 	
 clean:
 	rm -rf ./build

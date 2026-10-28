@@ -14,6 +14,11 @@ libretro-common
 **/cores/output
 **/boot/output
 **/squashfs/output
+**/psp64/src
+**/psp64/build
+**/psp64/output
+**/psp64/.dl
+**/psp64/.sysroot
 
 **/other/evtest
 **/other/jstest

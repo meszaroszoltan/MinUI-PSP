@@ -135,7 +135,9 @@ extern int on_hdmi;
 
 #define SDCARD_PATH "/mnt/sdcard"
 #define MUTE_VOLUME_RAW 0
+#ifdef __arm__
 #define HAS_NEON
+#endif
 #define SAMPLES 400 // fix for (most) fceumm underruns
 
 ///////////////////////////////

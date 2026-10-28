@@ -1,0 +1,18 @@
+diff --git a/libretro/Makefile.common b/libretro/Makefile.common
+index 6bdb4ef..7f9c9c4 100644
+--- a/libretro/Makefile.common
++++ b/libretro/Makefile.common
+@@ -687,11 +687,13 @@ endif
+ 
+ 
+ ifeq ($(TARGET_ARCH),arm64)
++ifneq (,$(findstring android,$(platform)))
+ SOURCES_CXX += \
+ 	  $(EXTDIR)/libadrenotools/src/driver.cpp \
+ 	  $(EXTDIR)/libadrenotools/lib/linkernsbypass/android_linker_ns.cpp \
+ 	  $(EXTDIR)/libadrenotools/lib/linkernsbypass/elf_soname_patcher.cpp
+ endif
++endif
+ 
+ SOURCES_C += \
+ 	       $(EXTDIR)/aemu_postoffice/client/postoffice.c \
