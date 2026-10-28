@@ -325,6 +325,9 @@ scaler_t PLAT_getScaler(GFX_Renderer* renderer);
 void PLAT_blitRenderer(GFX_Renderer* renderer);
 void PLAT_flip(SDL_Surface* screen, int sync);
 int PLAT_supportsOverscan(void);
+#ifdef HAS_GLES
+SDL_Window* PLAT_getWindow(void);
+#endif
 
 SDL_Surface* PLAT_initOverlay(void);
 void PLAT_quitOverlay(void);
