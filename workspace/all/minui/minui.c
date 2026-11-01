@@ -639,7 +639,9 @@ static int hasRoms(char* dir_name) {
 static Array* getRoot(void) {
 	Array* root = Array_new();
 	
-	if (hasRecents()) Array_push(root, Entry_new(FAUX_RECENT_PATH, ENTRY_DIR));
+	// still call hasRecents() for its side effects (loads the recents list and rewrites recent.txt),
+	// but don't show the Recently Played entry on the home screen
+	hasRecents();
 	
 	Array* entries = Array_new();
 	DIR* dh = opendir(ROMS_PATH);
