@@ -915,8 +915,9 @@ static Array* getEntries(char* path){
 		char* tmp = strrchr(collated_path, '(');
 		// 1 because we want to keep the opening parenthesis to avoid collating "Game Boy Color" and "Game Boy Advance" into "Game Boy"
 		// but conditional so we can continue to support a bare tag name as a folder name
-		if (tmp) tmp[1] = '\0'; 
-		
+		int collates = tmp!=NULL; // a bare tag name only matches itself, otherwise "PS" would swallow "PSP"
+		if (tmp) tmp[1] = '\0';
+
 		DIR *dh = opendir(ROMS_PATH);
 		if (dh!=NULL) {
 			struct dirent *dp;
@@ -929,7 +930,7 @@ static Array* getEntries(char* path){
 				if (dp->d_type!=DT_DIR) continue;
 				strcpy(tmp, dp->d_name);
 			
-				if (!prefixMatch(collated_path, full_path)) continue;
+				if (collates ? !prefixMatch(collated_path, full_path) : !exactMatch(collated_path, full_path)) continue;
 				addEntries(entries, full_path);
 			}
 			closedir(dh);
