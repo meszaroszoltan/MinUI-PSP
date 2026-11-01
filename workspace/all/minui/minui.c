@@ -716,29 +716,27 @@ static Array* getRoot(void) {
 		}
 	}
 	
+	// always promote each collection to the root, above the systems
 	if (hasCollections()) {
-		if (entries->count) Array_push(root, Entry_new(COLLECTIONS_PATH, ENTRY_DIR));
-		else { // no visible systems, promote collections to root
-			dh = opendir(COLLECTIONS_PATH);
-			if (dh!=NULL) {
-				struct dirent *dp;
-				char* tmp;
-				char full_path[256];
-				sprintf(full_path, "%s/", COLLECTIONS_PATH);
-				tmp = full_path + strlen(full_path);
-				Array* collections = Array_new();
-				while((dp = readdir(dh)) != NULL) {
-					if (hide(dp->d_name)) continue;
-					strcpy(tmp, dp->d_name);
-					Array_push(collections, Entry_new(full_path, ENTRY_DIR)); // yes, collections are fake directories
-				}
-				EntryArray_sort(collections);
-				for (int i=0; i<collections->count; i++) {
-					Array_push(entries, collections->items[i]);
-				}
-				Array_free(collections); // just free the array part, entries now owns collections entries
-				closedir(dh);
+		DIR* cdh = opendir(COLLECTIONS_PATH);
+		if (cdh!=NULL) {
+			struct dirent *dp;
+			char* tmp;
+			char full_path[256];
+			sprintf(full_path, "%s/", COLLECTIONS_PATH);
+			tmp = full_path + strlen(full_path);
+			Array* collections = Array_new();
+			while((dp = readdir(cdh)) != NULL) {
+				if (hide(dp->d_name)) continue;
+				strcpy(tmp, dp->d_name);
+				Array_push(collections, Entry_new(full_path, ENTRY_DIR)); // yes, collections are fake directories
 			}
+			EntryArray_sort(collections);
+			for (int i=0; i<collections->count; i++) {
+				Array_push(root, collections->items[i]);
+			}
+			Array_free(collections); // just free the array part, root now owns collections entries
+			closedir(cdh);
 		}
 	}
 	
