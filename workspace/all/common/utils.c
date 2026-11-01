@@ -30,7 +30,7 @@ int containsString(char* haystack, char* needle) {
 	return strcasestr(haystack, needle) != NULL;
 }
 int hide(char* file_name) {
-	return file_name[0]=='.' || suffixMatch(".disabled", file_name) || exactMatch("map.txt", file_name);
+	return file_name[0]=='.' || suffixMatch(".disabled", file_name) || exactMatch("map.txt", file_name) || exactMatch("Images", file_name);
 }
 
 void getDisplayName(const char* in_name, char* out_name) {

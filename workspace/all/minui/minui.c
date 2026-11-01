@@ -1490,7 +1490,7 @@ int main (int argc, char *argv[]) {
 			int ox;
 			int oy;
 			
-			// simple thumbnail support a thumbnail for a file or folder named NAME.EXT needs a corresponding /.res/NAME.EXT.png 
+			// simple thumbnail support a thumbnail for a file or folder named NAME.EXT needs a corresponding /Images/NAME.EXT.png (or stock /.res/NAME.EXT.png)
 			// that is no bigger than platform FIXED_HEIGHT x FIXED_HEIGHT
 			int had_thumb = 0;
 			if (!show_version && total>0) {
@@ -1507,7 +1507,8 @@ int main (int argc, char *argv[]) {
 				char* tmp = strrchr(res_root, '/');
 				tmp[0] = '\0';
 				
-				sprintf(res_path, "%s/.res/%s.png", res_root, res_name);
+				sprintf(res_path, "%s/Images/%s.png", res_root, res_name);
+				if (!exists(res_path)) sprintf(res_path, "%s/.res/%s.png", res_root, res_name);
 				LOG_info("res_path: %s\n", res_path);
 				if (exists(res_path)) {
 					had_thumb = 1;

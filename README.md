@@ -6,6 +6,32 @@ Aimed for devices that use MinUI's `rg35xxplus` folder (H700: eg. RG35XX Plus, R
 <img width="1228" height="921" alt="092E8A46-67B8-442A-BEE6-B231F4D877AF_1_102_o" src="https://github.com/user-attachments/assets/e4e6ad6b-bd56-4bcf-97a6-661f2c9391c9" />
 
 
+## Other changes from stock MinUI
+
+The release zip contains only `PSP.pak`. For the rest, build `minui.elf` from this branch and put it on your card.
+
+### Native PSP menu
+
+PSP games run through minarch like every other system, so they get MinUI's own in-game menu instead of PPSSPP's. A bare `PS` folder also no longer pulls in `PSP` games.
+
+### Home screen collections and hidden recents
+
+The home screen lists each collection directly and no longer shows Recently Played.
+
+To manage favorites from the device, use the third-party [Favorites pak](https://github.com/ben16w/minui-favorites) by ben16w. It isn't part of this fork, so install it separately. Its Favorites collection then appears directly on the home screen.
+
+### Explicit box art
+
+Box art can live in a visible `Images` folder in each system folder, as `Images/<game file name>.png`. It's checked before `.res`, and `Images` never appears as a game. Stock MinUI builds don't read it, and would list the folder.
+
+`minui_boxart.py` is a box art scraper you run on your Mac. It downloads art from Libretro's thumbnails into `Images`, and moves any existing `.res` art there:
+
+    python3 minui_boxart.py --roms /Volumes/<card>/Roms
+
+### Branch for sleep
+
+The `sleep-120s` branch raises the idle sleep from 30 seconds to 2 minutes.
+
 ## Install
 
 1. Unzip `PSP.pak-rg35xxplus.zip` from [Releases](../../releases) at the root of your MinUI SD card.
